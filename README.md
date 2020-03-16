@@ -54,8 +54,8 @@ Additional Notes
 	- If you set it to at least double of the FPS set in BlueStacks Settings, some apps / games might double their FPS cap e.g. from 30 to 60 FPS.
 	- Tested on Love Live! School Idol Festival: All Stars which has ~30 FPS cap in the menu.
 	- You can replicate this without BsTrigger by:
-		-   Set the BlueStacks FPS to "A" FPS (e.g. 60 FPS) > Close BlueStacks.
-		-  Open BlueStacks > Settings > Engine > Enable High Frame Rate > Set the new FPS to at least double of "A" FPS (e.g. 120 FPS).
+		- Set the BlueStacks FPS to "A" FPS (e.g. 60 FPS) > Close BlueStacks.
+		- Open BlueStacks > Settings > Engine > Enable High Frame Rate > Set the new FPS to at least double of "A" FPS (e.g. 120 FPS).
 		- Open the targeted app / game.
 	- The effect will be lost once BlueStacks is closed. The steps in (c) need to be repeated to regain the effect.
 	- The FPS cap set by BsTrigger will not change the FPS set in BlueStacks Settings. It will only execute the function to trigger the cap change.
@@ -67,7 +67,7 @@ Additional Notes
 
 2. FPS Counter:
 
-	Similar to FPS Uncap, this will not change the FPS counter set in BlueStacks Settings.
+	Similar to FPS Uncap, this will not change the FPS counter set in BlueStacks Settings. It will only trigger the function for FPS counter display.
 
 3. bs.cfg:
 
