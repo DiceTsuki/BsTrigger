@@ -17,7 +17,7 @@ There are 2 options:
 
 1. Install Python 3.7.x (https://www.python.org/downloads/), extract "BsTrigger" (bstrigger_1_0_src.zip) directory and open Bstrigger.py .
 
-2. Extract "BsTrigger" (bstrigger_1_0_x86_exec.zip / bstrigger_1_0_x86_exec_noconsole.zip / the x64 counterparts) directory and open BsTrigger.exe . No Python installation required.
+2. Extract "BsTrigger" (bstrigger_1_0_win_x86_exec.zip / bstrigger_1_0_win_x86_exec_noconsole.zip / the x86_64 counterparts) directory and open BsTrigger.exe . No Python installation required.
 
 Note:
 
