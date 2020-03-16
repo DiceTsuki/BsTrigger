@@ -7,7 +7,7 @@ A simple Python scripts / app to trigger BlueStacks':
 
 2. FPS Counter
 
-Bstrigger was build and tested with Python 3.7.6 .
+BsTrigger was build and tested with Python 3.7.6 .
 
 
 How to "Install"
