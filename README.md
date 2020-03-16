@@ -57,7 +57,7 @@ Additional Notes
 		- Set the BlueStacks FPS to "A" FPS (e.g. 60 FPS) > Close BlueStacks.
 		- Open BlueStacks > Settings > Engine > Enable High Frame Rate > Set the new FPS to at least double of "A" FPS (e.g. 120 FPS).
 		- Open the targeted app / game.
-	- The effect will be lost once BlueStacks is closed. The steps in (c) need to be repeated to regain the effect.
+	- The effect will be lost once BlueStacks is closed. The steps need to be repeated to regain the effect.
 	- The FPS cap set by BsTrigger will not change the FPS set in BlueStacks Settings. It will only execute the function to trigger the cap change.
 
 	WARNING:
