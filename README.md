@@ -1,4 +1,4 @@
-BsTrigger 1.1.0
+BsTrigger 1.1.1
 ========================================
 
 A simple Python scripts / app to trigger BlueStacks':
@@ -12,6 +12,11 @@ BsTrigger was build and tested with Python 3.7.7 .
 
 Changelog
 ========================================
+## 1.1.1: A small one to be sure, but...
+
+1. Changed: Main Window: boot_btn: "Starts Current Instance" -> "Boot Current Instance".
+
+## 1.1.0: BlueStacks Booter
 
 1. Changed: bs.cfg: BstkParams, BstkMisc -> BsParams, BsMisc.
 

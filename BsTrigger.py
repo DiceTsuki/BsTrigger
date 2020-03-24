@@ -27,7 +27,7 @@ import bsconn
 class Main:
     def __init__(self):
         # Global Variables
-        self.bstr_ver = "1.1.0"
+        self.bstr_ver = "1.1.1"
         self.bs_cfg = "bs.cfg"
         self.inst_cfg = "inst.cfg"
         self.def_bsa_port = 9999
@@ -366,7 +366,7 @@ class Main:
         # Boot Frame / Bar
         self.boot_frame = tk_frame(self.main_win, background=self.frame_bg)
 
-        boot_btn = tk_btn(self.boot_frame, text="Starts Current Instance", foreground=self.boot_btn_fg, background=self.boot_btn_bg, command=self.bs_boot_fromui)
+        boot_btn = tk_btn(self.boot_frame, text="Boot Current Instance", foreground=self.boot_btn_fg, background=self.boot_btn_bg, command=self.bs_boot_fromui)
 
         self.boot_frame.grid(row=2, column=0, columnspan=2, sticky="WE")
         self.boot_frame.columnconfigure(0, weight=1)
