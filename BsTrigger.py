@@ -1,6 +1,9 @@
 from pathlib import Path
 import re
 import json
+import argparse
+import subprocess
+import time
 
 
 # GUI-related
@@ -24,12 +27,18 @@ import bsconn
 class Main:
     def __init__(self):
         # Global Variables
-        self.bstr_ver = "1.0"
+        self.bstr_ver = "1.1.0"
         self.bs_cfg = "bs.cfg"
         self.inst_cfg = "inst.cfg"
         self.def_bsa_port = 9999
         self.def_hdp_port = 2881
+        self.def_bs_port = 2871
         self.def_turbo = 120
+        self.def_runasadmin = False
+        self.def_max_run_checks = 30
+        self.def_inst_name = "Android" # Default instance of BlueStacks
+        self.run_checks = 0
+        self.bs_process = None
         self.inst_name = ""
         self.inst_id = 0
         self.inst_gadid = ""
@@ -39,8 +48,8 @@ class Main:
         self.frame_bg = "#2e2e2e"
         self.label_fg = "#ffffff"
         self.label_bg = "#2e2e2e"
+        self.def_font_fg = "#000000"
         self.success_font_fg = "#009933"
-        self.default_font_fg = "#000000"
         self.success_btn_fg = "#ffffff"
         self.success_btn_bg = "#2f9ee9"
         self.turbo_btn_fg = "#ffffff"
@@ -67,8 +76,185 @@ class Main:
         self.inst_delete_all_btn_bg = "#4d4d4d"
         self.bs_btn_fg = "#ffffff"
         self.bs_btn_bg = "#2f9ee9"
+        self.boot_btn_fg = "#ffffff"
+        self.boot_btn_bg = "#4d4d4d"
         self.ok_btn_fg = "#ffffff"
         self.ok_btn_bg = "#4d4d4d"
+
+        # Argument parser
+        argparser = argparse.ArgumentParser(description="If none is given, Bstrigger will boot the UI normally")
+        argparser.add_argument("-instance", type=str, help="Name of the instance that will be launched (default: Android) (example: -instance Android_1)")
+        argparser.add_argument("-app", type=str, help="The package name of Android app / game to be launched (default: None) (example: -app com.google.search)")
+        argparser.add_argument("-turbo", type=int, help="FPS to be set (default: None) (example: -turbo 120)")
+        argparser.add_argument("-showfps", nargs="?", const=True, help="Show FPS Counter (default: None) (example: -showfps)")
+        argparser.add_argument("-silent", nargs="?", const=True, help="Will automatically exit BsTrigger after success / failed to launch instance without displaying UI (default: None) (example: -silent)")
+        args = argparser.parse_args()
+
+        # Evaluate the arguments give, if any
+        if args.instance != None or args.app != None or args.turbo != None or args.showfps != None or args.silent != None:
+            self.boot_window(args)
+        else:
+            self.main_window(True)
+
+
+    # Boot window
+    def boot_window(self, args):
+        boot_success = False
+        instances = self.get_inst_list()
+        
+        if args.instance not in instances:
+            args.instance = self.def_inst_name
+
+        # Start main window and withdraw so that we can display the boot window
+        self.main_window(False)
+        self.main_win.withdraw()
+
+        # Switch main windows UI to launched instance
+        self.inst_var.set(args.instance)
+
+        # Boot up the instance
+        bs_started = self.bs_boot(args.instance)
+
+        if bs_started:
+            # Display boot window
+            boot_win = tk_tlvl()
+            boot_win.title("Waiting for Instance: %s to finish booting..." % (args.instance))
+            boot_win.minsize(500, 0)
+            boot_win.resizable(0, 0)
+            boot_win.protocol("WM_DELETE_WINDOW", self.close_app)
+            boot_win.after(1000, lambda:self.boot_check(boot_win))
+            boot_win.mainloop()
+            boot_success = self.bs_ping() # Last check after boot window is destroyed
+            print(">> Boot finished: %s" % (boot_success))
+
+        if boot_success:
+            # Update the main window UI
+            self.set_inst()
+
+            # Start the triggers
+            if args.turbo != None:
+                self.turbo_entry.delete(0, tk_end)
+                self.turbo_entry.insert(0, args.turbo)
+                self.trigger_turbo()
+
+            if args.showfps:
+                self.trigger_fps_counter(args.showfps)
+
+            # Start the app
+            if args.app != None:
+                self.bs_launch_app(args.app)
+        else:
+            print(">> Discarding all boot arguments and starting BsTrigger normally...")
+
+        # Show main window (or quit if -silent and boot is a success)
+        if args.silent and boot_success:
+            self.close_app()
+        else:
+            self.main_win.deiconify()
+            self.main_win.mainloop()
+
+
+    # BlueStacks Booter
+    def bs_boot(self, instance=""):
+        if instance == "":
+            if self.inst_name != "":
+                instance = self.inst_name
+            else:
+                instance = self.def_inst_name
+        
+        bs_started = False
+        bs_exe = self.get_bsconf("BsMisc", "bsexe")
+        
+        if bs_exe != "":
+            if Path(bs_exe).is_file():
+                runasadmin = self.get_bsconf("BsMisc", "runasadmin")
+
+                if runasadmin == "":
+                    runasadmin = self.def_runasadmin
+
+                try:
+                    print(">> Booting Instance: %s..." % (instance))
+                    # Launch a process and make it independent from BsTrigger
+                    self.bs_process = subprocess.Popen("%s -vmname %s" % (bs_exe, instance), shell=runasadmin, creationflags=subprocess.DETACHED_PROCESS or subprocess.CREATE_NEW_PROCESS_GROUP)
+                    
+                    if self.bs_process.poll() == None: # Is running, not returning anyting yet
+                        print(">> Boot started for Instance: %s" % (instance))
+                        bs_started = True
+                    else:
+                        print(">> Bluestacks.exe was closed. Failed to start Instance: %s" % (instance))
+                        self.bs_process = None
+                except Exception as e:
+                    print(">> Boot error: %s" % (e))
+                    tk_msgbox.showerror(title="Error", message="Boot error: %s" % (e))
+                    self.bs_process = None
+
+        return bs_started
+
+
+    # Check if BlueStacks instance is completely launched and end the root window
+    def boot_check(self, root):
+        # Check if BlueStacks process is running
+        if self.bs_process != None and self.bs_process.poll() != None:
+            print(">> Bluestacks.exe was closed. Cancelling boot check...")
+            self.bs_process = None
+            self.close_win(root)
+            return
+        elif self.bs_process == None:
+            print(">> No Bluestacks.exe was booted. Cancelling boot check...")
+            self.close_win(root)
+            return
+        
+        max_run_checks = self.get_bsconf("BsMisc", "maxrunchecks")
+
+        if max_run_checks == "":
+            max_run_checks = self.def_max_run_checks
+            
+        boot_success = self.bs_ping()
+
+        if boot_success:
+            self.run_checks = 0
+            # Add a delay after boot is completed before allowing further requests to BlueStacks
+            # Or else, the 1st request will be resulting in an error
+            count = 5
+                
+            while count > 0:
+                root.title("Contacting instance in (%d)" % (count))
+                count = count - 1
+                time.sleep(1.0)
+            
+            self.close_win(root)
+        else:
+            self.run_checks = self.run_checks + 1
+            
+            if self.run_checks >= max_run_checks:
+                self.run_checks = 0
+                self.close_win(root)
+                print(">> Max number of boot checks reached (%d)" % (max_run_checks))
+            else:
+                root.after(1000, lambda:self.boot_check(root))
+
+
+    # A simplified version of boot_window() that can be triggered from boot_btn
+    def bs_boot_fromui(self):
+        bs_started = self.bs_boot()
+
+        if bs_started:
+            self.main_win.withdraw()
+            boot_fromui_win = tk_tlvl()
+            boot_fromui_win.title("Waiting for Instance: %s to finish booting..." % (self.inst_name))
+            boot_fromui_win.minsize(500, 0)
+            boot_fromui_win.resizable(0, 0)
+            boot_fromui_win.protocol("WM_DELETE_WINDOW", lambda:self.close_win(boot_fromui_win, self.main_win))
+            boot_fromui_win.after(1000, lambda:self.boot_check(boot_fromui_win))
+            boot_fromui_win.mainloop()
+            boot_status = self.bs_ping()
+            print(">> Boot finished: %s" % (boot_status))
+            self.set_inst()
+            self.main_win.deiconify()
+
+
+    # Set-up main window
+    def main_window(self, start_loop):
         
         # Main Window
         self.main_win = tk_tk()
@@ -82,6 +268,7 @@ class Main:
         self.main_win.columnconfigure(1, weight=1)
         self.main_win.rowconfigure(0, weight=1)
         self.main_win.rowconfigure(1, weight=1)
+        self.main_win.rowconfigure(2, weight=1)
 
         # Controls Frame
         self.ctrl_frame = tk_frame(self.main_win, background=self.frame_bg)
@@ -91,7 +278,7 @@ class Main:
         turbowhat_btn = tk_btn(turbo_frame, text="?", height=5, foreground=self.turbo_btn_fg, background=self.turbo_btn_bg, command=lambda:self.what_is_this("Trigger the BlueStacks' FPS cap change. This will not change the FPS set in BlueStacks Settings. May cause some apps / games to double their FPS cap (e.g. from 30 to 60 FPS) if the TURBO FPS is set to 2X of the FPS set in the BlueStacks Settings.\n\nMAKE SURE TO ENABLE VSYNC (If disabled for BlueStacks) or FPS LIMITER to prevent screen tearing / overheating."))
         turbo_label = tk_label(turbo_frame, text="FPS", foreground=self.label_fg, background=self.label_bg)
         self.turbo_entry = tk_entry(turbo_frame, justify="center", width=5, validate="key", validatecommand=validate_cmd)
-        self.turbo_entry.insert(tk_end, self.def_turbo)
+        self.turbo_entry.insert(0, self.def_turbo)
 
         fps_counter_frame = tk_frame(self.ctrl_frame, background=self.frame_bg)
         self.fps_counter_on_btn = tk_btn(fps_counter_frame, text="SHOW\n[FPS]", width=5, height=5, foreground=self.fps_counter_on_btn_fg, background=self.fps_counter_on_btn_bg, command=lambda:self.trigger_fps_counter(True))
@@ -128,12 +315,12 @@ class Main:
         conn_label = tk_label(self.conn_frame, text="Connection Ports", foreground=self.label_fg, background=self.label_bg, justify="center")
         bsa_port_label = tk_label(self.conn_frame, text="Bs Android", foreground=self.label_fg, background=self.label_bg)
         self.bsa_port_entry = tk_entry(self.conn_frame, justify="center", validate="key", validatecommand=validate_cmd)
-        self.bsa_port_entry.insert(tk_end, self.def_bsa_port)
+        self.bsa_port_entry.insert(0, self.def_bsa_port)
         hdp_port_label = tk_label(self.conn_frame, text="HD-Player", foreground=self.label_fg, background=self.label_bg)
         self.hdp_port_entry = tk_entry(self.conn_frame, justify="center", validate="key", validatecommand=validate_cmd)
-        self.hdp_port_entry.insert(tk_end, self.def_hdp_port)
+        self.hdp_port_entry.insert(0, self.def_hdp_port)
         auto_port_btn = tk_btn(self.conn_frame, text="Auto Set", foreground=self.auto_port_btn_fg, background=self.auto_port_btn_bg, command=self.autoset_conn_ports)
-        auto_portwhat_btn = tk_btn(self.conn_frame, text="?", foreground=self.auto_port_btn_fg, background=self.auto_port_btn_bg, command=lambda:self.what_is_this("Load ports assigned to current instance from BlueStacks' player.log. Restart your BlueStacks' instance if the Auto Set does not work."))
+        auto_portwhat_btn = tk_btn(self.conn_frame, text="?", foreground=self.auto_port_btn_fg, background=self.auto_port_btn_bg, command=lambda:self.what_is_this("Load ports assigned to current instance from BlueStacks' Player.log. Restart your BlueStacks' instance if the Auto Set does not work."))
         
         self.conn_frame.grid(row=0, column=1, sticky="E")
         conn_label.grid(row=0, column=0)
@@ -171,20 +358,31 @@ class Main:
         # Settings Frame
         sett_frame = tk_frame(self.main_win, background=self.frame_bg)
         
-        sett_frame.grid(row=1, column=1, sticky="E")
-        
         bs_btn = tk_btn(sett_frame, text="BlueStacks Parameters", foreground=self.bs_btn_fg, background=self.bs_btn_bg, command=self.set_bsconf)
         
+        sett_frame.grid(row=1, column=1, sticky="E")
         bs_btn.grid(row=0, column=0, sticky="WE")
+
+        # Boot Frame / Bar
+        self.boot_frame = tk_frame(self.main_win, background=self.frame_bg)
+
+        boot_btn = tk_btn(self.boot_frame, text="Starts Current Instance", foreground=self.boot_btn_fg, background=self.boot_btn_bg, command=self.bs_boot_fromui)
+
+        self.boot_frame.grid(row=2, column=0, columnspan=2, sticky="WE")
+        self.boot_frame.columnconfigure(0, weight=1)
+        self.boot_frame.rowconfigure(0, weight=1)
+        boot_btn.grid(row=0, column=0, sticky="WE")
 
         # "Remove" related frames if current instance is / can not be set
         if self.inst_name == "":
             self.ctrl_frame.grid_remove()
             self.conn_frame.grid_remove()
             self.inst_frame.grid_remove()
+            self.boot_frame.grid_remove()
 
         # Start the main window loop to listen to events
-        self.main_win.mainloop()
+        if start_loop:
+            self.main_win.mainloop()
 
 
     # Open BlueStacks Param Configurator
@@ -199,6 +397,7 @@ class Main:
             self.ctrl_frame.grid()
             self.conn_frame.grid()
             self.inst_frame.grid()
+            self.boot_frame.grid()
             
         self.main_win.deiconify()
 
@@ -213,11 +412,11 @@ class Main:
             return ""
 
 
-    # Set current instance values (Name, ID, Google Ads ID and Android ID) based on Option Menu state
+    # Set current instance's values (Name, ID, Google Ads ID and Android ID) based on Option Menu state. And update the UI.
     def set_inst(self, *args):
         self.inst_name = self.inst_var.get()
         
-        if self.inst_name == "Android":
+        if self.inst_name == self.def_inst_name:
             self.inst_id = 0
         else:
             match = re.match("Android_(\d+)", self.inst_name)
@@ -226,36 +425,22 @@ class Main:
             else:
                 self.inst_id = 0
                 
-        # load selected instance saved config into related UI entries
+        # load selected instance's saved config into related UI entries
         self.load_inst()
         
-        # Get Google Ad ID and Android ID
-        # But 1st, reset the global value of both variables
-        # We dont want to send old values while looking for new values of same variable for different instance
+        # Reset the global variables of Google Ads ID and Android ID
         self.inst_gadid = ""
         self.inst_aid = ""
-        port = self.def_bsa_port
-        
-        if self.bsa_port_entry.get() != "":
-            port = int(self.bsa_port_entry.get())
-        
-        gadid_path = "/getGoogleAdID"
-        gadid_conn = self.set_bsconn("GET_GOOGLEADID", port, gadid_path)
-        gadid_resp = gadid_conn.get_response()
-        aid_path = "/getAndroidID"
-        aid_conn = self.set_bsconn("GET_ANDROIDID", port, aid_path)
-        aid_resp = aid_conn.get_response()
-        
-        if "googleadid" in gadid_resp:
-            json_gadid_resp = self.json_bsconn(gadid_resp)
-            if json_gadid_resp != {}:
-                self.inst_gadid = json_gadid_resp["googleadid"]
-                
-        if "androidID" in aid_resp:
-            json_aid_resp = self.json_bsconn(aid_resp)
-            if json_aid_resp != {}:
-                self.inst_aid = json_aid_resp["androidID"]
-                
+
+        # Get new values and assign them to temp. variables ( = request without sending the old values)
+        tmp_inst_gadid = self.bs_get_gadid()
+        tmp_inst_aid = self.bs_get_aid()
+
+        # Assign the temp. -> global variables
+        self.inst_gadid = tmp_inst_gadid
+        self.inst_aid = tmp_inst_aid
+
+        # Update the main window's title
         if self.inst_gadid == "" or self.inst_aid == "":
             self.main_win.title("BsTrigger %s (%s: Closed)" % (self.bstr_ver, self.inst_name))
         elif self.inst_gadid != "" and self.inst_aid != "":
@@ -264,13 +449,13 @@ class Main:
 
     # Get the instances list from VM data directory
     def get_inst_list(self):
-        vmdatadir = self.get_bsconf("BstkMisc", "vmdatadir")
+        vmdatadir = self.get_bsconf("BsMisc", "vmdatadir")
         instances = list()
         
         if vmdatadir != "" and Path(vmdatadir).is_dir():
             for child in Path(vmdatadir).iterdir():
                 if child.is_dir():
-                    if child.name == "Android":
+                    if child.name == self.def_inst_name:
                         instances.append(child.name)
                     elif re.match("Android_\d+", child.name):
                         instances.append(child.name)
@@ -352,6 +537,7 @@ class Main:
                 if self.inst_name in data:
                     self.turbo_entry.delete(0, tk_end)
                     self.turbo_entry.insert(0, data[self.inst_name]["turbo"])
+                    self.turbo_entry.configure(foreground=self.success_font_fg)
                     self.bsa_port_entry.delete(0, tk_end)
                     self.bsa_port_entry.insert(0, data[self.inst_name]["bsa_port"])
                     self.bsa_port_entry.configure(foreground=self.success_font_fg)
@@ -363,15 +549,16 @@ class Main:
             if Path(self.inst_cfg).is_file():
                 tk_msgbox.showerror(title="Error", message="Unable to read %s for loading the saved instances!" % (self.inst_cfg))
         finally:
-            if (not save_exists):
+            if not save_exists:
                 self.turbo_entry.delete(0, tk_end)
                 self.turbo_entry.insert(0, self.def_turbo)
+                self.turbo_entry.configure(foreground=self.def_font_fg)
                 self.bsa_port_entry.delete(0, tk_end)
                 self.bsa_port_entry.insert(0, self.def_bsa_port)
-                self.bsa_port_entry.configure(foreground=self.default_font_fg)
+                self.bsa_port_entry.configure(foreground=self.def_font_fg)
                 self.hdp_port_entry.delete(0, tk_end)
                 self.hdp_port_entry.insert(0, self.def_hdp_port)
-                self.hdp_port_entry.configure(foreground=self.default_font_fg)
+                self.hdp_port_entry.configure(foreground=self.def_font_fg)
 
  
     # Delete current instance from the config (inst.cfg)
@@ -416,17 +603,17 @@ class Main:
         info_frame = tk_frame(info_win, background=self.frame_bg)
         info_inst_name_label = tk_label(info_frame, text="Instance Name", foreground=self.label_fg, background=self.label_bg)
         info_inst_name_entry = tk_entry(info_frame, justify="center")
-        info_inst_name_entry.insert(tk_end, self.inst_name)
+        info_inst_name_entry.insert(0, self.inst_name)
         info_inst_id_label = tk_label(info_frame, text="Instance ID", foreground=self.label_fg, background=self.label_bg)
         info_inst_id_entry = tk_entry(info_frame, justify="center")
-        info_inst_id_entry.insert(tk_end, self.inst_id)
+        info_inst_id_entry.insert(0, self.inst_id)
         info_inst_gadid_label = tk_label(info_frame, text="Google Ads ID", foreground=self.label_fg, background=self.label_bg)
         info_inst_gadid_entry = tk_entry(info_frame, justify="center")
-        info_inst_gadid_entry.insert(tk_end, self.inst_gadid)
+        info_inst_gadid_entry.insert(0, self.inst_gadid)
         info_inst_aid_label = tk_label(info_frame, text="Android ID", foreground=self.label_fg, background=self.label_bg)
         info_inst_aid_entry = tk_entry(info_frame, justify="center",)
-        info_inst_aid_entry.insert(tk_end, self.inst_aid)
-        ok_btn = tk_btn(info_frame, text="OK", foreground=self.ok_btn_fg, background=self.ok_btn_bg, command=lambda:self.on_close(info_win))
+        info_inst_aid_entry.insert(0, self.inst_aid)
+        ok_btn = tk_btn(info_frame, text="OK", foreground=self.ok_btn_fg, background=self.ok_btn_bg, command=lambda:self.close_win(info_win))
 
         right_frame = tk_frame(info_win, width=50, background=self.frame_bg)
         bottom_frame = tk_frame(info_win, height=10, background=self.frame_bg)
@@ -451,12 +638,11 @@ class Main:
         right_frame.grid(row=0, column=2, sticky="NSWE")
         bottom_frame.grid(row=1, column=0, columnspan=3, sticky="NSWE")
         
-        info_win.protocol("WM_DELETE_WINDOW", lambda:self.on_close(info_win))
+        info_win.protocol("WM_DELETE_WINDOW", lambda:self.close_win(info_win))
         info_win.mainloop()
         
 
-
-    # Auto-set ports based on BlueStacks' player.log
+    # Auto-set ports based on BlueStacks' Player.log
     def autoset_conn_ports(self):
         # Default ports
         bsa_port = self.def_bsa_port
@@ -464,59 +650,60 @@ class Main:
         skip_bsa = False
         skip_hdp = False
         
-        # Load from player.log
-        logdir = self.get_bsconf("BstkMisc", "logdir")
-        if logdir != "":
-            playerlog = Path(logdir) / "player.log"
-            if playerlog.is_file():
+        # Load from Player.log
+        playerlog = self.get_bsconf("BsMisc", "playerlog")
+        
+        if playerlog != "":
+            if Path(playerlog).is_file():
                 inst_part = ""
-                if self.inst_name != "Android":
+                if self.inst_name != self.def_inst_name:
                     inst_part = " %s:" % (self.inst_name)
                 pattern1 = "\(HD-Player\) INFO:%s Bst Android Port Updated to (\d+)" % (inst_part)
                 pattern2 = "\(HD-Player\) INFO:%s Server listening on port (\d+)" % (inst_part)
                 try:
-                    # Newer BlueStacks version encoded player.log/Player.log with UTF-8
+                    # Newer BlueStacks versions encoded Player.log with UTF-8
                     f = open(playerlog, "r", encoding="utf-8")
                     data = f.read()
                     f.close()
-                    bsa_port = int(re.findall(pattern1, data)[-1])
+                    bsa_port = int(re.findall(pattern1, data)[-1]) # [-1] = last occurrence
                     hdp_port = int(re.findall(pattern2, data)[-1])
                 except:
-                    tk_msgbox.showerror(title="Error", message="Unable to read the required values from player.log! Please restart current instance and try again.")
+                    tk_msgbox.showerror(title="Error", message="Unable to read the required values from Player.log! Please restart current instance and try again.")
                     if self.bsa_port_entry.get() != "":
                         skip_bsa = True
                     if self.hdp_port_entry.get() != "":
                         skip_hdp = True
             else:
-                tk_msgbox.showerror(title="Error", message="Unable to find player.log! Make sure that the Log Directory is right and current instance was launched once before trying again.")
+                tk_msgbox.showerror(title="Error", message="Unable to find Player.log! Make sure that the Player.log path is right and current instance is launched once before trying again.")
                 
-        if (not skip_bsa):
+        if not skip_bsa:
             self.bsa_port_entry.delete(0, tk_end)
             self.bsa_port_entry.insert(0, bsa_port)
             self.bsa_port_entry.configure(foreground=self.success_font_fg)
             
-        if (not skip_hdp):
+        if not skip_hdp:
             self.hdp_port_entry.delete(0, tk_end)
             self.hdp_port_entry.insert(0, hdp_port)
             self.hdp_port_entry.configure(foreground=self.success_font_fg)
 
 
     # Set-up bsconn module with required fields
-    def set_bsconn(self, mode, port, path):
+    def set_bsconn(self, mode, port, path, body = {}):
         conn = bsconn.Main()
-        conn.h_oem = self.get_bsconf("BstkParams", "x_oem")
-        conn.h_email = self.get_bsconf("BstkParams", "x_email")
-        conn.h_machineid = self.get_bsconf("BstkParams", "x_machine_id")
-        conn.h_vermachineid = self.get_bsconf("BstkParams", "x_version_machine_id")
-        conn.h_apitoken = self.get_bsconf("BstkParams", "x_api_token")
+        conn.h_oem = self.get_bsconf("BsParams", "x_oem")
+        conn.h_email = self.get_bsconf("BsParams", "x_email")
+        conn.h_machineid = self.get_bsconf("BsParams", "x_machine_id")
+        conn.h_vermachineid = self.get_bsconf("BsParams", "x_version_machine_id")
+        conn.h_apitoken = self.get_bsconf("BsParams", "x_api_token")
         conn.h_vmname = self.inst_name
         conn.h_googleaid = self.inst_gadid
         conn.h_androidid = self.inst_aid
         conn.h_vmid = self.inst_id
-        conn.h_useragent = self.get_bsconf("BstkParams", "User-Agent")
+        conn.h_useragent = self.get_bsconf("BsParams", "User-Agent")
         conn.mode = mode
         conn.port = port
         conn.path = path
+        conn.body = body
         return conn
 
 
@@ -535,8 +722,111 @@ class Main:
             return {}
 
 
+    # BlueStacks pinger
+    def bs_ping(self):
+        mode = "PING"
+        success = False
+        port = self.def_bsa_port
+        
+        if self.bsa_port_entry.get() != "":
+            port = int(self.bsa_port_entry.get())
+        
+        path = "/ping"
+        conn = self.set_bsconn(mode, port, path)
+        resp = conn.get_response()
+
+        if "result" in resp:
+            json_resp = self.json_bsconn(resp)
+
+            if json_resp != {}:
+                result = json_resp["result"]
+
+                if result == "ok":
+                    success = True
+
+        return success
+
+
+    # Get Google Ads ID
+    def bs_get_gadid(self):
+        gadid = ""
+        mode = "GET_GOOGLEADID"
+        port = self.def_bsa_port
+        
+        if self.bsa_port_entry.get() != "":
+            port = int(self.bsa_port_entry.get())
+        
+        path = "/getGoogleAdID"
+        conn = self.set_bsconn(mode, port, path)
+        resp = conn.get_response()
+        
+        if "googleadid" in resp:
+            json_resp = self.json_bsconn(resp)
+            if json_resp != {}:
+                gadid = json_resp["googleadid"]
+
+        return gadid
+
+
+    # Get Android ID
+    def bs_get_aid(self):
+        aid = ""
+        mode = "GET_ANDROIDID"
+        port = self.def_bsa_port
+        
+        if self.bsa_port_entry.get() != "":
+            port = int(self.bsa_port_entry.get())
+        
+        path = "/getAndroidID"
+        conn = self.set_bsconn(mode, port, path)
+        resp = conn.get_response()
+        
+        if "androidID" in resp:
+            json_resp = self.json_bsconn(resp)
+            if json_resp != {}:
+                aid = json_resp["androidID"]
+
+        return aid
+
+
+    # BlueStacks app launcher
+    def bs_launch_app(self, app_pkg):
+        mode = "LAUNCH_APP"
+        success = False
+        port = self.get_bsconf("BsMisc", "bsport")
+        
+        if port == "":
+            port = self.def_bs_port
+        
+        path = "/openPackage"
+        body = {
+            "vmname": self.inst_name,
+            "hidden": False,
+            "json": {
+                "app_icon_url": "",
+                "app_name": "",
+                "app_url": "",
+                "app_pkg": app_pkg
+                }
+            }
+        conn = self.set_bsconn(mode, port, path, body)
+        resp = conn.get_response()
+
+        if "success" in resp:
+            json_resp = self.json_bsconn(resp)
+
+            if json_resp != {}:
+                resp_success = json_resp["success"]
+
+                if type(resp_success) == bool:
+                        success = resp_success
+
+        return success
+
+
     # Turbo trigger
     def trigger_turbo(self):
+        mode = "SET_FPS"
         success = False
         
         if self.bsa_port_entry.get() == "":
@@ -544,7 +834,6 @@ class Main:
         elif self.turbo_entry.get() == "":
             tk_msgbox.showerror(title="Error", message="TURBO FPS is empty!")
         else:
-            mode = "SET_FPS"
             port = int(self.bsa_port_entry.get())
             fps = int(self.turbo_entry.get())
             path = "/setfpsvalue?fps=%d" % (fps)
@@ -553,8 +842,10 @@ class Main:
             
             if "result" in resp:
                 json_resp = self.json_bsconn(resp)
+                
                 if json_resp != {}:
                     result = json_resp["result"]
+                    
                     if result == "ok":
                         success = True
                         #tk_msgbox.showinfo(title="Success", message="FPS cap was changed successfully.")
@@ -578,11 +869,10 @@ class Main:
     # FPS Counter trigger
     def trigger_fps_counter(self, switch_on):
         mode = "SET_SHOWFPSOFF"
+        success = False
         
         if switch_on:
-            mode = "SET_SHOWFPSON"
-            
-        success = False
+            mode = "SET_SHOWFPSON"            
         
         if self.hdp_port_entry.get() == "":
             tk_msgbox.showerror(title="Error", message="HD-Player Port is empty!")
@@ -594,10 +884,12 @@ class Main:
             
             if "success" in resp:
                 json_resp = self.json_bsconn(resp)
+                
                 if json_resp != {}:
                     resp_success = json_resp["success"]
+                    
                     if type(resp_success) == bool and resp_success:
-                        success = True
+                        success = resp_success
                         #tk_msgbox.showinfo(title="Success", message="FPS Counter status was changed successfully.")
                     else:
                         tk_msgbox.showerror(title="Error", message="The command to change the FPS counter was deemed invalid by BlueStacks!")
@@ -642,14 +934,25 @@ class Main:
         else:
             return True
 
+
     # Explanation triggered by [?] button
     def what_is_this(self, text):
         tk_msgbox.showinfo(title="What is This?", message=text)
+
     
-    # Handle the On Close event "properly"
-    def on_close(self, window):
-        window.quit() # Quit the mainloop()
-        window.destroy()# Destroy the window             
+    # Close specified window and restore the root window if specified and was withdrawed
+    def close_win(self, current, root = ""):
+        current.quit() # Quit the mainloop()
+        current.destroy()# Destroy the window
+
+        if root != "" and bool(root.winfo_exists()) and not bool(root.winfo_ismapped()):
+            root.deiconify()
+
+
+    # Close whole app
+    def close_app(self):
+        self.close_win(self.main_win)
+        raise SystemExit()
 
 if __name__ == "__main__":
     main = Main()

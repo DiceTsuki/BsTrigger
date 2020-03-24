@@ -16,6 +16,7 @@ class Main:
         self.mode = ""
         self.port = 0
         self.path = ""
+        self.body = {}
 
     def get_response(self):
         url = "http://127.0.0.1:%d%s" % (self.port, self.path)
@@ -31,9 +32,12 @@ class Main:
             "vmid": self.h_vmid,
             "User-Agent": self.h_useragent
             }
+
         body = {}
-        
-        if self.mode == "SET_FPS":
+
+        if self.body != {}:
+            body = self.body
+        elif self.mode == "SET_FPS":
             body = {"arg": ""}
         elif self.mode == "SET_SHOWFPSON":
             body = {"isshowfps": 1}
